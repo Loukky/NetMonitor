@@ -47,7 +47,7 @@
 
 ```bat
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe ^
-  /target:winexe /out:NetMonitor.exe /win32manifest:app.manifest ^
+  /target:winexe /out:NetMonitor.exe /win32manifest:app.manifest /win32icon:app.ico ^
   /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Data.dll ^
   Native.cs Settings.cs Lang.cs ProcActions.cs MainForm.cs GridData.cs Program.cs
 ```
@@ -81,6 +81,7 @@ lang/en-US.ini
 | `GridData.cs` | 数据装载、右键菜单、缓存与过滤 |
 | `Program.cs` | 程序入口与自检 |
 | `app.manifest` | UAC 清单（requireAdministrator） |
+| `app.ico` | 程序图标，7 种尺寸（16–256） |
 | `lang/*.ini` | 界面文案（繁中、英文），可自行增改 |
 
 ## 自检

@@ -83,6 +83,10 @@ namespace NetMon
 
             fail += CheckLanguage();
 
+            // 图标：exe 里必须真的带图标资源。只看 app.ico 存在不够——
+            // 漏了 /win32icon 编译出来照样跑，只是没图标
+            fail += Check("exe 带图标资源", HasIconResource());
+
             Stopwatch sw = Stopwatch.StartNew();
             ProcActions.OpenLocation(Path.Combine(Environment.SystemDirectory, "cmd.exe"));
             sw.Stop();
@@ -91,6 +95,22 @@ namespace NetMon
             Console.WriteLine(fail == 0 ? "ALL PASS" : "FAILED: " + fail);
             return fail == 0 ? 0 : 1;
         }
+
+        // 图标资源检查：用 LoadImage 从自身 exe 里取图标，取到说明 /win32icon 生效了。
+        // 自检程序自身没打图标时退回检查旁边的 NetMonitor.exe，两者都行就通过
+        static bool HasIconResource()
+        {
+            string self = Application.ExecutablePath;
+            if (ExtractIcon(IntPtr.Zero, self, 0).ToInt64() > 1) return true;
+
+            string exe = Path.Combine(Path.GetDirectoryName(self), "NetMonitor.exe");
+            if (File.Exists(exe) && ExtractIcon(IntPtr.Zero, exe, 0).ToInt64() > 1) return true;
+
+            return false;
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern IntPtr ExtractIcon(IntPtr hInst, string exeFileName, int iconIndex);
 
         // 三套语言都要齐全：每个 key 在三个 ini 里都必须有值，
         // 否则切换语言时会出现半中半英。ini 缺失时内置中文兜底，所以这里查的是合并后的表

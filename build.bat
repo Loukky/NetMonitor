@@ -9,7 +9,7 @@ if not exist "%CSC%" (
     exit /b 1
 )
 
-"%CSC%" /nologo /target:winexe /out:NetMonitor.exe /win32manifest:app.manifest ^
+"%CSC%" /nologo /target:winexe /out:NetMonitor.exe /win32manifest:app.manifest /win32icon:app.ico ^
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Data.dll ^
     Native.cs Settings.cs Lang.cs ProcActions.cs MainForm.cs GridData.cs Program.cs
 

@@ -51,6 +51,10 @@ namespace NetMon
 
             Lang.Load(Settings.LanguageCode);
             BuildUi();
+            // 窗口/任务栏图标取自 exe 自身（编译时 /win32icon 打进去的那个），
+            // 这样只维护一份 app.ico，不用额外嵌资源
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch (Exception) { }
             Settings.Load(this, autoRefresh, intervalBox);
             langBox.SelectedItem = Lang.Code;   // 未指定过语言时按系统区域选中
             ApplyLang();
