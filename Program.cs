@@ -105,6 +105,10 @@ namespace NetMon
                 return 0;
             }
 
+            // 首屏加载完成后整表重建次数应当只有 1 次。这条锁的是"滚动条变长变短"
+            // 的真正原因：异步签名回填每算完一个文件就重建整表
+            fail += Check("首屏只重建一次 (" + f.loadCount + " 次)", f.loadCount <= 2);
+
             f.grid.FirstDisplayedScrollingRowIndex = 12;
             f.grid.Rows[12].Selected = true;
             Application.DoEvents();
@@ -197,8 +201,60 @@ namespace NetMon
             // 旧代码用 CellMouseDown 的 e.Location 直接 PointToScreen，那个坐标是相对单元格的
             fail += Check("菜单定位跟随点击位置", MenuFollowsCursor(f));
 
+            // 搜索框清空按钮：无内容时隐藏，有内容时出现，点了清空并收起
+            fail += Check("清空按钮默认隐藏", !f.clearButton.Visible);
+            f.search.Text = "svchost";
+            Application.DoEvents();
+            fail += Check("输入后出现清空按钮", f.clearButton.Visible);
+            f.clearButton.PerformClick();
+            Application.DoEvents();
+            fail += Check("点击后清空并收起",
+                f.search.TextLength == 0 && !f.clearButton.Visible);
+
+            // 签名回填必须原地改单元格：旧实现每算完一个文件就整表重建，
+            // 首屏几十个进程会把滚动条反复撑长又缩回
+            fail += Check("签名回填不重建表格", SignatureBackfillInPlace(f));
+
             Console.WriteLine(fail == 0 ? "ALL PASS" : "FAILED: " + fail);
             return fail == 0 ? 0 : 1;
+        }
+
+        // 对一行真实数据回填签名，要求行数、滚动位置都不变，且单元格内容已更新
+        static bool SignatureBackfillInPlace(MainForm f)
+        {
+            DataGridView g = f.grid;
+            if (g.Rows.Count < 3) return true;
+
+            g.FirstDisplayedScrollingRowIndex = 1;
+            Application.DoEvents();
+            int before = g.FirstDisplayedScrollingRowIndex;
+            int rows = g.Rows.Count;
+            string path = g.Rows[1].Cells["module"].Value as string;
+            if (string.IsNullOrEmpty(path) || path == "-") return true;
+
+            // 后台校验还在跑的话，它随后回填的结果会盖掉我们写进去的值（竞争，非缺陷）
+            for (int i = 0; i < 200 && f.SigPending; i++)
+            { Application.DoEvents(); System.Threading.Thread.Sleep(25); }
+
+            typeof(MainForm).GetMethod("ApplySignature",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                .Invoke(f, new object[] { path, "未签名" });
+            for (int i = 0; i < 5; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+
+            if (g.Rows.Count != rows) { Console.WriteLine("  行数 " + rows + " -> " + g.Rows.Count); return false; }
+            if (g.FirstDisplayedScrollingRowIndex != before)
+            {
+                Console.WriteLine("  滚动 " + before + " -> " + g.FirstDisplayedScrollingRowIndex);
+                return false;
+            }
+            foreach (DataGridViewRow r in g.Rows)
+                if ((r.Cells["module"].Value as string) == path
+                    && (r.Cells["sig"].Value as string) != "未签名")
+                {
+                    Console.WriteLine("  单元格未回填: " + r.Cells["sig"].Value);
+                    return false;
+                }
+            return true;
         }
 
         // 必须走真实的右键处理器 GridCellMouseDown，而不是直接调 menu.Show()：
@@ -299,12 +355,24 @@ namespace NetMon
             if (args.Length > 1 && args[0] == "--shot")
             {
                 Application.EnableVisualStyles();
+                int ms = args.Length > 2 ? int.Parse(args[2]) : 1000;
+                string filter = args.Length > 3 ? args[3] : null;
                 MainForm f = new MainForm();
+                f.TopMost = true;
                 f.Show();
-                for (int i = 0; i < 20; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(50); }
-                using (Bitmap b = new Bitmap(f.Width, f.Height))
+                for (int i = 0; i < ms / 50; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(50); }
+                if (filter != null)
                 {
-                    f.DrawToBitmap(b, new Rectangle(0, 0, f.Width, f.Height));
+                    f.search.Text = filter;
+                    for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+                }
+                Console.WriteLine("overlay=" + f.loadingPanel.Visible + " rows=" + f.grid.Rows.Count);
+                // 用真实截屏而不是 DrawToBitmap：自绘控件（加载遮罩）不走 DrawToBitmap
+                Rectangle r = f.Bounds;
+                using (Bitmap b = new Bitmap(r.Width, r.Height))
+                {
+                    using (Graphics g = Graphics.FromImage(b))
+                        g.CopyFromScreen(r.Location, Point.Empty, r.Size);
                     b.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
                 }
                 Environment.Exit(0);

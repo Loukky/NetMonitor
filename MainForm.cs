@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
@@ -15,9 +16,11 @@ namespace NetMon
         DataTable table;
         DataView view;
         internal DataGridView grid;
-        TextBox search;
+        internal TextBox search;
+        internal Button clearButton;
+        internal LoadingOverlay loadingPanel;
+        internal int loadCount;   // 整表重建次数，自检用来锁住"签名回填触发重建"的回归
         Label statusLabel;
-        Label placeholder;
         internal CheckBox autoRefresh;
         internal ComboBox intervalBox;
         internal Button refreshButton;
@@ -43,8 +46,6 @@ namespace NetMon
             KeyPreview = true;
 
             BuildUi();
-            LoadRows();
-
             Settings.Load(this, autoRefresh, intervalBox);
 
             timer = new Timer();
@@ -53,11 +54,34 @@ namespace NetMon
             intervalBox.SelectedIndexChanged += delegate { SyncTimer(); };
             SyncTimer();   // 按还原后的开关状态决定是否启动
 
+            // 首屏先亮遮罩，等窗口画出来再取数。取数会阻塞 UI 约半秒，
+            // 直接放在构造函数里的话用户看到的是一张边加载边跳动的空表
+            Shown += delegate { BeginInitialLoad(); };
+
             FormClosing += delegate { Settings.Save(this, autoRefresh, intervalBox); };
             KeyDown += delegate(object s, KeyEventArgs e)
             {
                 if (e.KeyCode == Keys.F5) LoadRows();
             };
+        }
+
+        void BeginInitialLoad()
+        {
+            loadingPanel.Visible = true;
+            loadingPanel.BringToFront();
+            loadingPanel.StartSpinner();
+
+            Timer t = new Timer();
+            t.Interval = 100;   // 让遮罩和转圈先画出来，别一帧都没显示就消失
+            t.Tick += delegate(object s, EventArgs e)
+            {
+                t.Stop();
+                t.Dispose();
+                LoadRows();
+                loadingPanel.StopSpinner();
+                loadingPanel.Visible = false;
+            };
+            t.Start();
         }
 
         int CurrentSeconds()
@@ -97,27 +121,46 @@ namespace NetMon
             bar.BackColor = Color.White;
             root.Controls.Add(bar, 0, 0);
 
+            // 搜索框 + 内嵌清空按钮。手写坐标而不是 Dock：Dock 的布局顺序取决于
+            // z-order，Fill 与 Right 混用很容易把按钮挤到左边去
+            Panel searchWrap = new Panel();
+            searchWrap.Size = new Size(260, 25);
+            searchWrap.BorderStyle = BorderStyle.FixedSingle;
+            searchWrap.BackColor = Color.White;
+            searchWrap.Margin = new Padding(0);
+
             search = new TextBox();
-            search.Width = 260;
-            search.BorderStyle = BorderStyle.FixedSingle;
+            search.BorderStyle = BorderStyle.None;
             search.Font = new Font("Microsoft YaHei UI", 9F);
             search.BackColor = Color.White;
+            search.Location = new Point(4, 4);
+            search.Width = 228;
             search.TextChanged += delegate { ApplyFilter(); };
+            // 占位文字用系统原生 cue banner，比自己塞 Label 稳（TextBox 是原生控件，
+            // 子控件绘制不可靠），且获得焦点时自动消失
+            search.HandleCreated += delegate { SetCue(search, "请输入关键词"); };
 
-            // TextBox 是原生控件不触发 Paint，占位文字用内部 Label 内缩 1px 保留边框
-            placeholder = new Label();
-            placeholder.Text = "请输入关键词";
-            placeholder.AutoSize = false;
-            placeholder.ForeColor = Color.FromArgb(150, 150, 150);
-            placeholder.BackColor = Color.White;
-            placeholder.TextAlign = ContentAlignment.MiddleLeft;
-            placeholder.Padding = new Padding(2, 0, 0, 0);
-            placeholder.Cursor = Cursors.IBeam;
-            placeholder.SetBounds(3, 2, search.Width - 8, search.Height - 5);
-            placeholder.Click += delegate { search.Focus(); };
-            search.TextChanged += delegate { placeholder.Visible = search.TextLength == 0; };
-            search.Controls.Add(placeholder);
-            bar.Controls.Add(search);
+            clearButton = new Button();
+            clearButton.Text = "✕";
+            clearButton.FlatStyle = FlatStyle.Flat;
+            clearButton.FlatAppearance.BorderSize = 0;
+            clearButton.BackColor = Color.White;
+            clearButton.ForeColor = Color.FromArgb(130, 130, 130);
+            clearButton.Font = new Font("Microsoft YaHei UI", 8F);
+            clearButton.Size = new Size(20, 19);
+            clearButton.Location = new Point(234, 2);
+            clearButton.Cursor = Cursors.Hand;
+            clearButton.TabStop = false;
+            clearButton.Visible = false;
+            clearButton.Click += delegate { search.Clear(); search.Focus(); };
+            // 悬停变深，鼠标离开恢复，给个可点的暗示
+            clearButton.MouseEnter += delegate { clearButton.ForeColor = Color.FromArgb(60, 60, 60); };
+            clearButton.MouseLeave += delegate { clearButton.ForeColor = Color.FromArgb(130, 130, 130); };
+
+            search.TextChanged += delegate { clearButton.Visible = search.TextLength > 0; };
+            searchWrap.Controls.Add(search);
+            searchWrap.Controls.Add(clearButton);
+            bar.Controls.Add(searchWrap);
 
             // 自动刷新间隔（秒）
             intervalBox = new ComboBox();
@@ -173,6 +216,15 @@ namespace NetMon
             grid.Dock = DockStyle.Fill;
             host.Controls.Add(grid);
 
+            // 首屏加载遮罩：盖住还在逐渐成形的表格，避免用户看到滚动条反复伸缩。
+            // 上沿让出表头高度，加载期间列名仍然可见，窗口不至于像空壳
+            loadingPanel = new LoadingOverlay();
+            loadingPanel.Visible = false;
+            host.Controls.Add(loadingPanel);
+            host.Resize += delegate { PlaceOverlay(host); };
+            PlaceOverlay(host);
+            loadingPanel.BringToFront();
+
             statusLabel = new Label();
             statusLabel.Dock = DockStyle.Fill;
             statusLabel.TextAlign = ContentAlignment.MiddleLeft;
@@ -180,6 +232,23 @@ namespace NetMon
             statusLabel.ForeColor = Color.FromArgb(110, 110, 110);
             statusLabel.BackColor = Color.FromArgb(250, 250, 250);
             root.Controls.Add(statusLabel, 0, 2);
+        }
+
+        // 原生占位文字（EM_SETCUEBANNER）。比在 TextBox 里塞 Label 可靠：
+        // 原生控件不保证子控件绘制，且获得焦点时 cue 会自动消失，无需额外处理
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+
+        static void SetCue(TextBox box, string text)
+        {
+            const int EM_SETCUEBANNER = 0x1501;
+            SendMessage(box.Handle, EM_SETCUEBANNER, new IntPtr(1), text);
+        }
+
+        void PlaceOverlay(Control host)
+        {
+            int top = grid.ColumnHeadersVisible ? grid.ColumnHeadersHeight : 0;
+            loadingPanel.SetBounds(0, top, host.Width, Math.Max(0, host.Height - top));
         }
 
         DataGridView BuildGrid()
@@ -336,6 +405,67 @@ namespace NetMon
             string like = "%" + q + "%";
             view.RowFilter = string.Format(
                 "name LIKE '{0}' OR remote LIKE '{0}' OR local LIKE '{0}' OR company LIKE '{0}'", like);
+        }
+    }
+
+    // 加载遮罩：白底 + 旋转圆弧 + "正在加载…"。
+    // 存在的意义是把"表格一边填一边撑出滚动条"的那段过程盖住
+    class LoadingOverlay : Control
+    {
+        Timer spin;
+        float angle;
+
+        public LoadingOverlay()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint
+                | ControlStyles.OptimizedDoubleBuffer, true);
+            BackColor = Color.White;
+        }
+
+        public void StartSpinner()
+        {
+            angle = 0;
+            if (spin == null)
+            {
+                spin = new Timer();
+                spin.Interval = 30;
+                spin.Tick += delegate
+                {
+                    angle = (angle + 12) % 360;
+                    Invalidate();
+                };
+            }
+            spin.Start();
+        }
+
+        public void StopSpinner()
+        {
+            if (spin != null) spin.Stop();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            const int size = 34;
+            int cx = Width / 2, cy = Height / 2 - 14;
+            Rectangle box = new Rectangle(cx - size / 2, cy - size / 2, size, size);
+
+            using (Pen bg = new Pen(Color.FromArgb(232, 232, 232), 3f))
+                g.DrawEllipse(bg, box);
+            using (Pen fg = new Pen(Color.FromArgb(0, 120, 215), 3f))
+            {
+                fg.StartCap = LineCap.Round;
+                fg.EndCap = LineCap.Round;
+                g.DrawArc(fg, box, angle, 110);
+            }
+
+            TextRenderer.DrawText(g, "正在加载…", Font,
+                new Rectangle(0, cy + size / 2 + 10, Width, 24),
+                Color.FromArgb(120, 120, 120),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
         }
     }
 }

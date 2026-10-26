@@ -183,6 +183,7 @@ namespace NetMon
                 return;
             }
             lastHash = hash;
+            loadCount++;
 
             // 记住滚动位置和选中行，刷新后原样恢复，不然每次都会跳回顶部
             int top = 0;
@@ -268,6 +269,12 @@ namespace NetMon
         }
 
         internal ContextMenuStrip RowMenuForTest { get { return rowMenu; } }
+
+        // 后台签名校验是否还有未完成的任务（自检用：等它清空再断言，避免竞争）
+        internal bool SigPending
+        {
+            get { lock (sigLock) { return sigPending.Count > 0; } }
+        }
 
         void RestoreSelection(string key)
         {
@@ -359,14 +366,31 @@ namespace NetMon
                     sigCache[path] = result;
                     sigPending.Remove(path);
                 }
-                // 回填界面必须在 UI 线程
-                if (IsHandleCreated && !IsDisposed)
-                {
-                    try { BeginInvoke((MethodInvoker)delegate { lastHash = 0; LoadRows(); }); }
-                    catch (Exception) { }
-                }
+                ApplySignature(path, result);
             });
             return "校验中…";
+        }
+
+        // 签名结果只回填对应单元格，不重建表格。
+        // 旧实现每算完一个文件就 lastHash=0 + LoadRows()，几十个进程连刷几十次，
+        // 滚动条在加载阶段反复变长变短就是这么来的
+        void ApplySignature(string path, string sig)
+        {
+            if (!IsHandleCreated || IsDisposed) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    if (IsDisposed) return;
+                    // pidMeta 与 table 都只在 UI 线程读写，不能提前在后台线程碰。
+                    // 直接改 DataTable 而不是遍历可见行，被过滤掉的行也能一起回填
+                    foreach (Meta m in pidMeta.Values)
+                        if (m.Module == path) m.Sig = sig;
+                    foreach (DataRow r in table.Rows)
+                        if ((r["module"] as string) == path) r["sig"] = sig;
+                });
+            }
+            catch (Exception) { }
         }
 
         // 取 exe 关联的小图标；失败返回 null，单元格留空
