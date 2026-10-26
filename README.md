@@ -18,7 +18,8 @@
 - **手动刷新** — 顶部「刷新」按钮或 F5
 - **关键词过滤** — 按进程名、IP、公司名实时筛选，输入框内带一键清空按钮
 - **加载动画** — 首次取数时显示转圈动画
-- **窗口记忆** — 记住窗口位置、大小、刷新设置
+- **多语言** — 简体中文 / 繁體中文 / English，可在界面切换，文案放在 `lang/*.ini` 里可直接改
+- **窗口记忆** — 记住窗口位置、大小、刷新设置和语言
 
 ### 右键菜单
 
@@ -48,31 +49,48 @@
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe ^
   /target:winexe /out:NetMonitor.exe /win32manifest:app.manifest ^
   /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Data.dll ^
-  Native.cs Settings.cs ProcActions.cs MainForm.cs GridData.cs Program.cs
+  Native.cs Settings.cs Lang.cs ProcActions.cs MainForm.cs GridData.cs Program.cs
 ```
 
 或双击 `build.bat`。
 
-### 自检
+## 多语言
 
-代码内置两套断言自检，改完可以直接跑：
+界面右上角可切换语言，选择会记进 `settings.ini`，下次启动保持。没选过则按系统区域自动判断（繁中地区给繁中，其他中文给简中，其余英文）。
 
-```bat
-NetMonitor.exe --check      :: 网络层、签名、进程操作
-NetMonitor.exe --check-ui   :: 界面、菜单定位、刷新行为
+文案放在 exe 同级的 `lang/` 目录，纯文本 ini，改完重启即生效，不用重新编译：
+
 ```
+lang/zh-TW.ini
+lang/en-US.ini
+```
+
+格式是 `[分组]` + `键=值`，实际键名是 `分组.键`，比如 `[col]` 下的 `name` 对应 `col.name`。多行文案用 `\n` 表示换行。**删掉某一行会退回内置的简体中文**，所以只需要翻译你关心的部分。简体中文本身内置在程序里，没有 `lang/zh-CN.ini` 也能正常工作。
+
+想加第三种语言：复制一份 ini 改内容，再在 `Lang.cs` 的 `Codes` 数组里加上语言代码即可。
 
 ## 项目结构
 
 | 文件 | 职责 |
 | --- | --- |
 | `Native.cs` | TCP 连接表读取（iphlpapi）、进程快照、IPv6 格式化 |
-| `Settings.cs` | 窗口位置/大小/刷新设置的持久化 |
+| `Settings.cs` | 窗口位置/大小/刷新/语言设置的持久化 |
+| `Lang.cs` | 多语言加载，内置简中兜底 + `lang/*.ini` 覆盖 |
 | `ProcActions.cs` | 进程属性、打开位置、结束进程、数字签名校验 |
 | `MainForm.cs` | 界面构建、刷新调度、签名着色 |
 | `GridData.cs` | 数据装载、右键菜单、缓存与过滤 |
 | `Program.cs` | 程序入口与自检 |
 | `app.manifest` | UAC 清单（requireAdministrator） |
+| `lang/*.ini` | 界面文案（繁中、英文），可自行增改 |
+
+## 自检
+
+代码内置两套断言自检，改完可以直接跑：
+
+```bat
+NetMonitor.exe --check      :: 网络层、签名、进程操作、三套文案齐全
+NetMonitor.exe --check-ui   :: 界面、菜单定位、刷新行为、切换语言
+```
 
 ## 已知限制
 

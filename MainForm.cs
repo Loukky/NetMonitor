@@ -24,6 +24,10 @@ namespace NetMon
         internal CheckBox autoRefresh;
         internal ComboBox intervalBox;
         internal Button refreshButton;
+        internal ComboBox langBox;
+        Label unitLabel;
+        Label intervalLabel;
+        Label langLabel;
         Timer timer;
         ToolTip tip;
         int lastHash;
@@ -37,7 +41,7 @@ namespace NetMon
 
         public MainForm()
         {
-            Text = "安全分析工具";
+            Text = Lang.T("app.title");
             ClientSize = new Size(1520, 820);
             MinimumSize = new Size(1000, 560);
             StartPosition = FormStartPosition.CenterScreen;
@@ -45,8 +49,11 @@ namespace NetMon
             BackColor = Color.White;
             KeyPreview = true;
 
+            Lang.Load(Settings.LanguageCode);
             BuildUi();
             Settings.Load(this, autoRefresh, intervalBox);
+            langBox.SelectedItem = Lang.Code;   // 未指定过语言时按系统区域选中
+            ApplyLang();
 
             timer = new Timer();
             timer.Tick += delegate { LoadRows(); };
@@ -177,6 +184,7 @@ namespace NetMon
             unit.ForeColor = Color.FromArgb(90, 90, 90);
             unit.Margin = new Padding(4, 4, 0, 0);
             bar.Controls.Add(unit);
+            unitLabel = unit;
 
             Label unit2 = new Label();
             unit2.Text = "自动刷新间隔";
@@ -184,6 +192,7 @@ namespace NetMon
             unit2.ForeColor = Color.FromArgb(90, 90, 90);
             unit2.Margin = new Padding(6, 4, 0, 0);
             bar.Controls.Add(unit2);
+            intervalLabel = unit2;
 
             autoRefresh = new CheckBox();
             autoRefresh.Text = "自动刷新";
@@ -206,6 +215,28 @@ namespace NetMon
                 LoadRows();
             };
             bar.Controls.Add(refreshButton);
+
+            // 语言选择：放最左边（RightToLeft 流式布局里最后添加的最靠左）
+            langBox = new ComboBox();
+            langBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            langBox.Width = 92;
+            langBox.Margin = new Padding(6, 0, 0, 0);
+            langBox.Items.AddRange(Lang.Codes);
+            langBox.SelectedIndexChanged += delegate
+            {
+                string code = langBox.SelectedItem as string;
+                if (code == null || code == Lang.Code) return;
+                Lang.Load(code);
+                ApplyLang();
+            };
+            bar.Controls.Add(langBox);
+
+            langLabel = new Label();
+            langLabel.Text = "语言";
+            langLabel.AutoSize = true;
+            langLabel.ForeColor = Color.FromArgb(90, 90, 90);
+            langLabel.Margin = new Padding(6, 4, 0, 0);
+            bar.Controls.Add(langLabel);
 
             Panel host = new Panel();
             host.Dock = DockStyle.Fill;
@@ -249,6 +280,81 @@ namespace NetMon
         {
             int top = grid.ColumnHeadersVisible ? grid.ColumnHeadersHeight : 0;
             loadingPanel.SetBounds(0, top, host.Width, Math.Max(0, host.Height - top));
+        }
+
+        // 切换语言：只改文案，不动数据。列标题、菜单、状态栏、占位文字都要重刷，
+        // 已经取到的连接留在表里，不重新扫描（切语言不该卡一下）
+        void ApplyLang()
+        {
+            Text = Lang.T("app.title");
+            unitLabel.Text = Lang.T("bar.seconds");
+            intervalLabel.Text = Lang.T("bar.interval");
+            langLabel.Text = Lang.T("bar.language");
+            autoRefresh.Text = Lang.T("bar.auto");
+            refreshButton.Text = Lang.T("bar.refresh");
+            SetCue(search, Lang.T("search.cue"));
+
+            grid.Columns["name"].HeaderText = Lang.T("col.name");
+            grid.Columns["pid"].HeaderText = Lang.T("col.pid");
+            grid.Columns["sig"].HeaderText = Lang.T("col.sig");
+            grid.Columns["module"].HeaderText = Lang.T("col.module");
+            grid.Columns["proto"].HeaderText = Lang.T("col.proto");
+            grid.Columns["local"].HeaderText = Lang.T("col.local");
+            grid.Columns["remote"].HeaderText = Lang.T("col.remote");
+            grid.Columns["state"].HeaderText = Lang.T("col.state");
+            grid.Columns["company"].HeaderText = Lang.T("col.company");
+
+            // 安全状态列按当前语言最长文案定宽：英文 "Digitally signed" 比中文长得多，
+            // 固定 95px 会截成 "Digitally sig…"。这里按实测文字宽度留出内边距
+            string[] sigTexts = { Lang.T("sig.signed"), Lang.T("sig.unsigned"), Lang.T("sig.checking") };
+            int need = 0;
+            using (Graphics gg = grid.CreateGraphics())
+            {
+                foreach (string t in sigTexts)
+                    need = Math.Max(need, TextRenderer.MeasureText(gg, t, grid.DefaultCellStyle.Font).Width);
+            }
+            grid.Columns["sig"].Width = Math.Max(95, need + 18);
+
+            ApplyMenuLang();
+
+            // 表格里的签名文字也要跟着换；进程名/路径/公司名是系统数据，不翻译。
+            // 用缓存的文案 key 重新翻译，不重新校验签名（那会每个文件卡 58ms）
+            RetranslateSignatures();
+            statusLabel.Text = "";
+            if (grid.Rows.Count > 0)
+                statusLabel.Text = Lang.F("status.updated", table.Rows.Count,
+                    CountPids(), DateTime.Now);
+
+            if (loadingPanel.Visible) loadingPanel.Invalidate();
+        }
+
+        int CountPids()
+        {
+            HashSet<int> set = new HashSet<int>();
+            foreach (DataRow r in table.Rows)
+                set.Add(Convert.ToInt32(r["pid"]));
+            return set.Count;
+        }
+
+        // 用缓存的签名 key 重新翻译现有行的"安全状态"。
+        // 未校验完的行保持原样，等后台回填时自然用新语言
+        void RetranslateSignatures()
+        {
+            foreach (DataRow r in table.Rows)
+            {
+                string path = r["module"] as string;
+                if (string.IsNullOrEmpty(path) || path == "-")
+                {
+                    r["sig"] = Lang.T(Convert.ToInt32(r["pid"]) <= 4 ? "sig.system" : "sig.unknown");
+                    continue;
+                }
+                string key;
+                lock (sigLock)
+                {
+                    if (!sigCache.TryGetValue(path, out key)) key = null;
+                }
+                r["sig"] = key == null ? Lang.T("sig.checking") : Lang.T(key);
+            }
         }
 
         DataGridView BuildGrid()
@@ -314,17 +420,17 @@ namespace NetMon
             g.Columns.Add(ic);
             ic.DataPropertyName = "icon";
 
-            DataGridViewTextBoxColumn nameCol = AddCol(g, "进程名", "name", 140, false);
+            DataGridViewTextBoxColumn nameCol = AddCol(g, Lang.T("col.name"), "name", 140, false);
             nameCol.DefaultCellStyle.Padding = new Padding(0, 0, 4, 0);
-            AddCol(g, "进程ID", "pid", 65, true);
-            AddCol(g, "安全状态", "sig", 95, false);
-            AddCol(g, "模块", "module", 140, false);
-            AddCol(g, "协议", "proto", 60, false);
+            AddCol(g, Lang.T("col.pid"), "pid", 65, true);
+            AddCol(g, Lang.T("col.sig"), "sig", 95, false);
+            AddCol(g, Lang.T("col.module"), "module", 140, false);
+            AddCol(g, Lang.T("col.proto"), "proto", 60, false);
             // 带方括号的完整 IPv6 实测 287px，加左右内边距留到 305 才能不截断
-            AddCol(g, "本地地址", "local", 305, false);
-            AddCol(g, "远程地址", "remote", 305, false);
-            AddCol(g, "状态", "state", 105, false);
-            DataGridViewTextBoxColumn co = AddCol(g, "公司名", "company", 160, false);
+            AddCol(g, Lang.T("col.local"), "local", 305, false);
+            AddCol(g, Lang.T("col.remote"), "remote", 305, false);
+            AddCol(g, Lang.T("col.state"), "state", 105, false);
+            DataGridViewTextBoxColumn co = AddCol(g, Lang.T("col.company"), "company", 160, false);
             co.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
             // 地址列放不下时靠 tooltip 看全；模块路径同理
@@ -349,7 +455,6 @@ namespace NetMon
                 Color c = SigColor(e.Value as string);
                 if (c != Color.Empty) e.CellStyle.ForeColor = c;
             };
-
             g.CellMouseDown += GridCellMouseDown;
             g.CellDoubleClick += delegate(object s, DataGridViewCellEventArgs e)
             {
@@ -362,11 +467,12 @@ namespace NetMon
             return g;
         }
 
-        // 安全状态对应的文字颜色：已签名绿、未签名红，其他不着色
+        // 安全状态对应的文字颜色：已签名绿、未签名红，其他不着色。
+        // 比较的是当前语言的文案，切换语言后表格里的值也跟着换，所以仍然成立
         internal static Color SigColor(string sig)
         {
-            if (sig == "数字签名文件") return Color.FromArgb(0, 140, 60);
-            if (sig == "未签名") return Color.FromArgb(200, 30, 30);
+            if (sig == Lang.T("sig.signed")) return Color.FromArgb(0, 140, 60);
+            if (sig == Lang.T("sig.unsigned")) return Color.FromArgb(200, 30, 30);
             return Color.Empty;
         }
 
@@ -462,7 +568,7 @@ namespace NetMon
                 g.DrawArc(fg, box, angle, 110);
             }
 
-            TextRenderer.DrawText(g, "正在加载…", Font,
+            TextRenderer.DrawText(g, Lang.T("loading"), Font,
                 new Rectangle(0, cy + size / 2 + 10, Width, 24),
                 Color.FromArgb(120, 120, 120),
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);

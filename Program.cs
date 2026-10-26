@@ -77,9 +77,11 @@ namespace NetMon
             fail += Check("系统进程拒绝结束", ProcActions.Kill(4) != null);
 
             // 签名着色：已签名绿、未签名红
-            fail += Check("签名颜色映射", MainForm.SigColor("数字签名文件") == Color.FromArgb(0, 140, 60)
-                && MainForm.SigColor("未签名") == Color.FromArgb(200, 30, 30)
-                && MainForm.SigColor("校验中…") == Color.Empty);
+            fail += Check("签名颜色映射", MainForm.SigColor(Lang.T("sig.signed")) == Color.FromArgb(0, 140, 60)
+                && MainForm.SigColor(Lang.T("sig.unsigned")) == Color.FromArgb(200, 30, 30)
+                && MainForm.SigColor(Lang.T("sig.checking")) == Color.Empty);
+
+            fail += CheckLanguage();
 
             Stopwatch sw = Stopwatch.StartNew();
             ProcActions.OpenLocation(Path.Combine(Environment.SystemDirectory, "cmd.exe"));
@@ -88,6 +90,66 @@ namespace NetMon
 
             Console.WriteLine(fail == 0 ? "ALL PASS" : "FAILED: " + fail);
             return fail == 0 ? 0 : 1;
+        }
+
+        // 三套语言都要齐全：每个 key 在三个 ini 里都必须有值，
+        // 否则切换语言时会出现半中半英。ini 缺失时内置中文兜底，所以这里查的是合并后的表
+        static int CheckLanguage()
+        {
+            int fail = 0;
+
+            fail += Check("三种语言可选", Lang.Codes.Length == 3
+                && Array.IndexOf(Lang.Codes, Lang.Simplified) >= 0
+                && Array.IndexOf(Lang.Codes, Lang.Traditional) >= 0
+                && Array.IndexOf(Lang.Codes, Lang.English) >= 0);
+
+            // 逐个语言加载，检查关键 key 都翻译了。
+            // 标题不做去重：简繁的「安全分析工具」本来就写法相同，去重会误报
+            string[] keys = { "app.title", "col.name", "col.sig", "menu.kill",
+                              "sig.signed", "sig.unsigned", "msg.killTitle" };
+            Dictionary<string, string[]> byLang = new Dictionary<string, string[]>();
+            bool allTranslated = true;
+            foreach (string code in Lang.Codes)
+            {
+                Lang.Load(code);
+                string[] vals = new string[keys.Length];
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    vals[i] = Lang.T(keys[i]);
+                    if (vals[i] == keys[i] || vals[i].Length == 0)
+                    {
+                        allTranslated = false;
+                        Console.WriteLine("  缺词条 " + code + ":" + keys[i]);
+                    }
+                }
+                byLang[code] = vals;
+            }
+            fail += Check("三套文案齐全", allTranslated);
+
+            // 英文必须与中文明显不同；简繁之间至少有词条写法不同（简体/繁体字形）
+            fail += Check("英文文案确实翻译过",
+                Differ(byLang[Lang.Simplified], byLang[Lang.English]) >= keys.Length);
+            fail += Check("繁中与简中有差异",
+                Differ(byLang[Lang.Simplified], byLang[Lang.Traditional]) >= 3);
+
+            // 未知语言代码必须回退到按系统区域猜，而不是留空
+            Lang.Load("xx-YY");
+            fail += Check("未知语言回退到系统区域", Array.IndexOf(Lang.Codes, Lang.Code) >= 0);
+
+            // 缺词条时返回 key 本身，不能抛异常也不能返回 null
+            fail += Check("缺词条安全", Lang.T("no.such.key") == "no.such.key");
+
+            Lang.Load(Lang.Simplified);   // 复位，别把后面的断言带偏
+            return fail;
+        }
+
+        // 两套文案里有多少条写法不同
+        static int Differ(string[] a, string[] b)
+        {
+            int n = 0;
+            for (int i = 0; i < a.Length && i < b.Length; i++)
+                if (a[i] != b[i]) n++;
+            return n;
         }
 
         // 自检：刷新后滚动位置与选中行必须保持
@@ -146,6 +208,9 @@ namespace NetMon
             foreach (DataGridViewRow r in f.grid.Rows)
                 if ((r.Cells["name"].Value as string) == "未知进程") unknown++;
             fail += Check("无「未知进程」占位 (" + unknown + " 行)", unknown == 0);
+
+            // 切换语言：列标题、菜单、窗口标题都要跟着换，且数据不能丢
+            fail += CheckLangSwitch(f);
 
             // 窗口尺寸记忆：写入后能被读回
             Settings.Save(f, f.autoRefresh, f.intervalBox);
@@ -219,6 +284,52 @@ namespace NetMon
             return fail == 0 ? 0 : 1;
         }
 
+        // 切换语言后：列标题、右键菜单、窗口标题都要换，行数必须不变（不能因为换语言重新扫一遍）
+        static int CheckLangSwitch(MainForm f)
+        {
+            int fail = 0;
+            int rows = f.grid.Rows.Count;
+
+            f.langBox.SelectedItem = Lang.English;
+            Application.DoEvents();
+
+            fail += Check("切英文后窗口标题变英文", f.Text == "Security Analysis Tool");
+            fail += Check("切英文后列标题变英文", f.grid.Columns["name"].HeaderText == "Process"
+                && f.grid.Columns["sig"].HeaderText == "Signature");
+            bool killMenu = false;
+            foreach (ToolStripItem it in f.RowMenuForTest.Items)
+                if (it.Text == "End process") killMenu = true;
+            fail += Check("切英文后右键菜单变英文", killMenu);
+            fail += Check("切语言不丢数据 (" + rows + " 行)", f.grid.Rows.Count == rows && rows > 0);
+
+            // 英文 "Digitally signed" 比中文长，列宽必须跟着语言撑开，否则截断成 "Digitally sig…"
+            int sigW = f.grid.Columns["sig"].Width;
+            using (Graphics gg = f.grid.CreateGraphics())
+            {
+                int need = TextRenderer.MeasureText(gg, Lang.T("sig.signed"),
+                    f.grid.DefaultCellStyle.Font).Width;
+                fail += Check("安全状态列容得下文案 (" + sigW + "px ≥ " + (need + 12) + "px)",
+                    sigW >= need + 12);
+            }
+
+            f.langBox.SelectedItem = Lang.Traditional;
+            Application.DoEvents();
+            fail += Check("切繁中后列标题变繁中", f.grid.Columns["name"].HeaderText == "進程名");
+            fail += Check("切繁中后菜单变繁中", MenuHas(f, "結束進程"));
+
+            f.langBox.SelectedItem = Lang.Simplified;
+            Application.DoEvents();
+            fail += Check("切回简中", f.grid.Columns["name"].HeaderText == "进程名" && MenuHas(f, "结束进程"));
+            return fail;
+        }
+
+        static bool MenuHas(MainForm f, string text)
+        {
+            foreach (ToolStripItem it in f.RowMenuForTest.Items)
+                if (it.Text == text) return true;
+            return false;
+        }
+
         // 对一行真实数据回填签名，要求行数、滚动位置都不变，且单元格内容已更新
         static bool SignatureBackfillInPlace(MainForm f)
         {
@@ -238,7 +349,7 @@ namespace NetMon
 
             typeof(MainForm).GetMethod("ApplySignature",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                .Invoke(f, new object[] { path, "未签名" });
+                .Invoke(f, new object[] { path, "sig.unsigned" });
             for (int i = 0; i < 5; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
 
             if (g.Rows.Count != rows) { Console.WriteLine("  行数 " + rows + " -> " + g.Rows.Count); return false; }
@@ -249,7 +360,7 @@ namespace NetMon
             }
             foreach (DataGridViewRow r in g.Rows)
                 if ((r.Cells["module"].Value as string) == path
-                    && (r.Cells["sig"].Value as string) != "未签名")
+                    && (r.Cells["sig"].Value as string) != Lang.T("sig.unsigned"))
                 {
                     Console.WriteLine("  单元格未回填: " + r.Cells["sig"].Value);
                     return false;
@@ -296,9 +407,9 @@ namespace NetMon
             if (m == null) return false;
             int ops = 0;
             foreach (ToolStripItem it in m.Items)
-                if (it.Text == "复制远程地址" || it.Text == "查询远程地址 IP 信息"
-                    || it.Text == "查看进程属性" || it.Text == "打开文件所在位置"
-                    || it.Text == "结束进程") ops++;
+                if (it.Tag as string == "menu.copyip" || it.Tag as string == "menu.queryip"
+                    || it.Tag as string == "menu.props" || it.Tag as string == "menu.location"
+                    || it.Tag as string == "menu.kill") ops++;
             return ops == 5;
         }
 
@@ -364,6 +475,11 @@ namespace NetMon
                 if (filter != null)
                 {
                     f.search.Text = filter;
+                    for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+                }
+                if (args.Length > 4)   // 指定语言截图，用于核对三套文案
+                {
+                    f.langBox.SelectedItem = args[4];
                     for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
                 }
                 Console.WriteLine("overlay=" + f.loadingPanel.Visible + " rows=" + f.grid.Rows.Count);

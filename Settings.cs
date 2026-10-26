@@ -32,6 +32,26 @@ namespace NetMon
             }
         }
 
+        // 上次选的语言代码；没选过返回 null，由 Lang.Detect 按系统区域猜
+        public static string LanguageCode
+        {
+            get
+            {
+                try
+                {
+                    if (!File.Exists(Path)) return null;
+                    foreach (string line in File.ReadAllLines(Path))
+                    {
+                        int i = line.IndexOf('=');
+                        if (i > 0 && line.Substring(0, i).Trim() == "lang")
+                            return line.Substring(i + 1).Trim();
+                    }
+                }
+                catch (Exception) { }
+                return null;
+            }
+        }
+
         public static void Load(Form f, CheckBox auto, ComboBox interval)
         {
             try
@@ -79,7 +99,8 @@ namespace NetMon
                 File.WriteAllLines(Path, new string[] {
                     "x=" + r.X, "y=" + r.Y, "w=" + r.Width, "h=" + r.Height,
                     "auto=" + auto.Checked,
-                    "interval=" + (interval.SelectedItem == null ? 2 : (int)interval.SelectedItem)
+                    "interval=" + (interval.SelectedItem == null ? 2 : (int)interval.SelectedItem),
+                    "lang=" + Lang.Code
                 });
             }
             catch (Exception) { }

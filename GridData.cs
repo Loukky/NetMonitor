@@ -22,13 +22,13 @@ namespace NetMon
         void BuildContextMenu(DataGridView g)
         {
             rowMenu = new ContextMenuStrip();
-            rowMenu.Items.Add("复制远程地址", null, delegate { ActOnMenuRow(CopyRemoteIp); });
-            rowMenu.Items.Add("查询远程地址 IP 信息", null, delegate { ActOnMenuRow(QueryRemoteIp); });
+            AddMenuItem("menu.copyip", CopyRemoteIp);
+            AddMenuItem("menu.queryip", QueryRemoteIp);
             rowMenu.Items.Add(new ToolStripSeparator());
-            rowMenu.Items.Add("查看进程属性", null, delegate { ActOnMenuRow(ShowProps); });
-            rowMenu.Items.Add("打开文件所在位置", null, delegate { ActOnMenuRow(OpenLocation); });
+            AddMenuItem("menu.props", ShowProps);
+            AddMenuItem("menu.location", OpenLocation);
             rowMenu.Items.Add(new ToolStripSeparator());
-            rowMenu.Items.Add("结束进程", null, delegate { ActOnMenuRow(KillProcess); });
+            AddMenuItem("menu.kill", KillProcess);
             rowMenu.Opening += delegate(object s, System.ComponentModel.CancelEventArgs e)
             {
                 if (menuRowIndex < 0) { e.Cancel = true; return; }
@@ -37,9 +37,28 @@ namespace NetMon
                 foreach (ToolStripItem it in rowMenu.Items)
                 {
                     if (it is ToolStripSeparator) continue;
-                    it.Enabled = can || it.Text == "复制远程地址" || it.Text == "查询远程地址 IP 信息";
+                    string key = it.Tag as string;
+                    it.Enabled = can || key == "menu.copyip" || key == "menu.queryip";
                 }
             };
+        }
+
+        // 菜单项把文案 key 存进 Tag：切语言时只改 Text，不用靠文字反查是哪一项
+        void AddMenuItem(string key, Action action)
+        {
+            ToolStripItem it = rowMenu.Items.Add(Lang.T(key), null, delegate { ActOnMenuRow(action); });
+            it.Tag = key;
+        }
+
+        // 切换语言时刷新菜单文字。菜单结构不变，只换 Text
+        void ApplyMenuLang()
+        {
+            if (rowMenu == null) return;
+            foreach (ToolStripItem it in rowMenu.Items)
+            {
+                string key = it.Tag as string;
+                if (key != null) it.Text = Lang.T(key);
+            }
         }
 
         // 右键先选中该行，菜单关闭后仍以这行为准
@@ -108,18 +127,18 @@ namespace NetMon
             string url = IpQueryUrl(menuRemoteIp);
             if (!ProcActions.OpenUrl(url))
             {
-                MessageBox.Show("打开浏览器失败：" + url, "查询 IP 信息",
+                MessageBox.Show(Lang.F("msg.openBrowserFail", url), Lang.T("msg.queryTitle"),
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            statusLabel.Text = "已打开 IP 查询：" + menuRemoteIp;
+            statusLabel.Text = Lang.F("status.ipquery", menuRemoteIp);
         }
 
         bool HasRemoteIp()
         {
             if (string.IsNullOrEmpty(menuRemoteIp) || menuRemoteIp == "0.0.0.0" || menuRemoteIp == "::")
             {
-                MessageBox.Show("该行没有远程地址。", "查询 IP 信息",
+                MessageBox.Show(Lang.T("msg.noRemote"), Lang.T("msg.queryTitle"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return false;
             }
@@ -132,11 +151,11 @@ namespace NetMon
             try
             {
                 Clipboard.SetText(menuRemoteIp);
-                statusLabel.Text = "已复制远程地址：" + menuRemoteIp;
+                statusLabel.Text = Lang.F("status.copied", menuRemoteIp);
             }
             catch (Exception e)
             {
-                MessageBox.Show("复制失败：" + e.Message, "复制远程地址",
+                MessageBox.Show(Lang.F("msg.copyFail", e.Message), Lang.T("msg.copyTitle"),
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -154,14 +173,14 @@ namespace NetMon
         void KillProcess()
         {
             DialogResult r = MessageBox.Show(
-                string.Format("确定要结束进程 {0} (PID {1}) 吗？\r\n未保存的数据可能丢失。", menuName, menuPid),
-                "结束进程", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
+                Lang.F("msg.killConfirm", menuName, menuPid),
+                Lang.T("msg.killTitle"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
             if (r != DialogResult.OK) return;
 
             string err = ProcActions.Kill(menuPid);
             if (err != null)
             {
-                MessageBox.Show(err, "结束进程", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(err, Lang.T("msg.killTitle"), MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
             lastHash = 0;
@@ -178,8 +197,7 @@ namespace NetMon
             int hash = Hash(conns);
             if (hash == lastHash && table.Rows.Count > 0)
             {
-                statusLabel.Text = string.Format("共 {0} 条连接 · 无变化 · {1:HH:mm:ss}",
-                    conns.Count, DateTime.Now);
+                statusLabel.Text = Lang.F("status.nochange", conns.Count, DateTime.Now);
                 return;
             }
             lastHash = hash;
@@ -233,8 +251,7 @@ namespace NetMon
                 catch (Exception) { }
             }
 
-            statusLabel.Text = string.Format("共 {0} 条连接 · {1} 个进程 · 更新于 {2:HH:mm:ss}",
-                conns.Count, pids.Count, DateTime.Now);
+            statusLabel.Text = Lang.F("status.updated", conns.Count, pids.Count, DateTime.Now);
         }
 
         // 只看会影响显示内容的部分，避免时间戳之类造成假变化
@@ -283,6 +300,9 @@ namespace NetMon
             {
                 if (RowKey(row) == key)
                 {
+                    // 只设 Selected 的话高亮在这一行，CurrentRow 还停在上一次的位置，
+                    // 两者会不一致。设 CurrentCell 两个都到位
+                    grid.CurrentCell = row.Cells["name"];
                     row.Selected = true;
                     return;
                 }
@@ -309,7 +329,7 @@ namespace NetMon
             {
                 // 拿不到路径时（系统/受保护进程）退回进程快照里的 exe 名，总比"未知进程"强
                 m.Name = FallbackName(pid);
-                m.Sig = pid <= 4 ? "系统文件" : "未知";
+                m.Sig = Lang.T(pid <= 4 ? "sig.system" : "sig.unknown");
             }
 
             pidMeta[pid] = m;
@@ -348,19 +368,20 @@ namespace NetMon
         }
 
         // 签名校验涉及目录库枚举，单次约 58ms，几十个进程就是秒级卡顿。
-        // 这里只返回已缓存的结果，未校验的返回"校验中"，由后台线程补齐
+        // 这里只返回已缓存的结果，未校验的返回"校验中"，由后台线程补齐。
+        // 缓存里存的是文案 key（sig.signed 等），切语言时不用重新校验文件
         string SignatureOf(string path)
         {
-            string sig;
+            string key;
             lock (sigLock)
             {
-                if (sigCache.TryGetValue(path, out sig)) return sig;
-                if (sigPending.Contains(path)) return "校验中…";
+                if (sigCache.TryGetValue(path, out key)) return Lang.T(key);
+                if (sigPending.Contains(path)) return Lang.T("sig.checking");
                 sigPending.Add(path);
             }
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
-                string result = ProcActions.SignatureText(path);
+                string result = ProcActions.SignatureKey(path);
                 lock (sigLock)
                 {
                     sigCache[path] = result;
@@ -368,13 +389,14 @@ namespace NetMon
                 }
                 ApplySignature(path, result);
             });
-            return "校验中…";
+            return Lang.T("sig.checking");
         }
 
         // 签名结果只回填对应单元格，不重建表格。
         // 旧实现每算完一个文件就 lastHash=0 + LoadRows()，几十个进程连刷几十次，
-        // 滚动条在加载阶段反复变长变短就是这么来的
-        void ApplySignature(string path, string sig)
+        // 滚动条在加载阶段反复变长变短就是这么来的。
+        // 传进来的是文案 key，显示时再翻译，切语言不用重算
+        void ApplySignature(string path, string sigKey)
         {
             if (!IsHandleCreated || IsDisposed) return;
             try
@@ -382,6 +404,7 @@ namespace NetMon
                 BeginInvoke((MethodInvoker)delegate
                 {
                     if (IsDisposed) return;
+                    string sig = Lang.T(sigKey);
                     // pidMeta 与 table 都只在 UI 线程读写，不能提前在后台线程碰。
                     // 直接改 DataTable 而不是遍历可见行，被过滤掉的行也能一起回填
                     foreach (Meta m in pidMeta.Values)

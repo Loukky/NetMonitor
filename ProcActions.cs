@@ -21,7 +21,7 @@ namespace NetMon
         {
             if (!Usable(path))
             {
-                Warn("找不到该进程的可执行文件。\r\n系统进程或受保护进程通常取不到路径。");
+                Warn(Lang.T("msg.noExe"));
                 return;
             }
             try
@@ -36,12 +36,12 @@ namespace NetMon
                 ei.nShow = SW_SHOWNORMAL;
                 if (!ShellExecuteEx(ref ei))
                 {
-                    Warn("无法打开属性对话框（错误码 " + Marshal.GetLastWin32Error() + "）。");
+                    Warn(Lang.F("msg.propsFail", Marshal.GetLastWin32Error()));
                 }
             }
             catch (Exception e)
             {
-                Warn("打开属性失败：" + e.Message);
+                Warn(Lang.F("msg.propsError", e.Message));
             }
         }
 
@@ -53,7 +53,7 @@ namespace NetMon
         {
             if (!Usable(path))
             {
-                Warn("找不到该进程的可执行文件。\r\n系统进程或受保护进程通常取不到路径。");
+                Warn(Lang.T("msg.noExe"));
                 return;
             }
 
@@ -87,8 +87,7 @@ namespace NetMon
             // 兜底二：直接打开目录
             if (ShellOpen("explorer.exe", "\"" + dir + "\"")) return;
 
-            Warn("打开位置失败。\r\n如果程序以管理员身份运行，系统会禁止直接启动资源管理器；"
-                + "本程序已尝试通过 shell 接口打开，仍失败时请检查资源管理器是否正常运行。");
+            Warn(Lang.T("msg.locationFail"));
         }
 
         // 用 explorer 进程自身的令牌启动 explorer /select。
@@ -349,7 +348,7 @@ namespace NetMon
         // .NET 的 Process.Kill 依赖进程枚举，在受限环境下可能找不到目标进程
         public static string Kill(int pid)
         {
-            if (!CanOperate(pid)) return "系统进程不允许结束。";
+            if (!CanOperate(pid)) return Lang.T("msg.killSystemDenied");
 
             IntPtr h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
             if (h == IntPtr.Zero)
@@ -357,8 +356,7 @@ namespace NetMon
                 int err = Marshal.GetLastWin32Error();
                 if (err == 87 /*ERROR_INVALID_PARAMETER*/ || err == 1168 /*ERROR_NOT_FOUND*/)
                     return null;   // 进程已经不在了，目标已达成
-                return "结束失败：无法打开进程（错误码 " + err + "）。"
-                    + "\r\n\r\n系统进程、受保护进程或其他用户的进程需要以管理员身份运行本程序。";
+                return Lang.F("msg.killOpenFail", err);
             }
 
             try
@@ -372,8 +370,8 @@ namespace NetMon
                 if (TerminateProcess(h, 1)) return null;
                 int err = Marshal.GetLastWin32Error();
                 if (err == 5 /*ERROR_ACCESS_DENIED*/)
-                    return "结束失败：拒绝访问。\r\n\r\n该进程受保护或属于其他用户，请以管理员身份运行本程序。";
-                return "结束失败：错误码 " + err + "。";
+                    return Lang.T("msg.killAccessDenied");
+                return Lang.F("msg.killError", err);
             }
             finally
             {
@@ -397,10 +395,17 @@ namespace NetMon
         [DllImport("kernel32.dll")]
         static extern bool CloseHandle(IntPtr h);
 
+        // 返回文案 key 而不是翻译好的字符串：签名结果会缓存，
+        // 存 key 才能在切语言时直接换文字，不用重新校验一遍文件
+        public static string SignatureKey(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "sig.unknown";
+            return IsTrusted(path) ? "sig.signed" : "sig.unsigned";
+        }
+
         public static string SignatureText(string path)
         {
-            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "未知";
-            return IsTrusted(path) ? "数字签名文件" : "未签名";
+            return Lang.T(SignatureKey(path));
         }
 
         // 签名分两种：内嵌在 PE 里的，和系统目录（catalog）里的。
@@ -552,7 +557,7 @@ namespace NetMon
 
         static void Warn(string msg)
         {
-            MessageBox.Show(msg, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(msg, Lang.T("dlg.title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         const uint SEE_MASK_INVOKEIDLIST = 0x0000000C;
