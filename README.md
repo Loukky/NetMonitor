@@ -17,7 +17,7 @@
 - **自动刷新** — 可选开关，间隔 1/2/3 秒，默认关闭
 - **手动刷新** — 顶部「刷新」按钮或 F5
 - **关键词过滤** — 按进程名、IP、公司名实时筛选，输入框内带一键清空按钮
-- **加载动画** — 首屏取数与签名校验期间显示转圈遮罩，不再看到滚动条反复伸缩
+- **加载动画** — 首次取数时显示转圈动画
 - **窗口记忆** — 记住窗口位置、大小、刷新设置
 
 ### 右键菜单
@@ -73,51 +73,6 @@ NetMonitor.exe --check-ui   :: 界面、菜单定位、刷新行为
 | `GridData.cs` | 数据装载、右键菜单、缓存与过滤 |
 | `Program.cs` | 程序入口与自检 |
 | `app.manifest` | UAC 清单（requireAdministrator） |
-
-## 实现说明
-
-### 为什么用 GetExtendedTcpTable 而不是 netstat
-
-`netstat` 输出是文本，要正则解析，慢且容易出错。`GetExtendedTcpTable` 直接返回结构化的连接表，含 `OwningPid`，一次调用拿到全部连接。
-
-### 为什么结束进程不用 Process.Kill()
-
-`.NET` 的 `Process.Kill()` 依赖进程枚举。在受限环境下 `GetProcessById` 可能直接抛 `ArgumentException`（进程明明还在），会被误判为「进程已退出」。所以改用 `OpenProcess` + `TerminateProcess` 按 PID 直接操作，并先用 `GetExitCodeProcess` 判断进程是否还活着。
-
-### 签名校验为什么不能用 X509Certificate
-
-`X509Certificate.CreateFromSignedFile` 只读 PE 文件内嵌的签名，而 Windows 自带程序绝大多数是**目录签名（catalog）**，会被全部误判成「未签名」。
-
-正确做法是双路径：
-1. `WinVerifyTrust` 校验内嵌签名
-2. `CryptCATAdmin*` 系列 API 查询目录库成员（注意目录库用 SHA256，必须用 `CryptCATAdminCalcHashFromFileHandle2` 配合 `CryptCATAdminAcquireContext2`）
-
-签名校验单次约 58ms，几十个进程会卡住界面，所以放在后台线程异步校验，先显示「校验中…」再回填。
-
-### 提权后怎么打开资源管理器
-
-Windows 禁止提权进程直接启动 `explorer.exe`（会得到 `0xC0000142`）。三种绕法依次尝试：
-
-1. 借用 explorer 进程的令牌（`OpenProcessToken` + `DuplicateTokenEx` + `CreateProcessWithTokenW`）降权启动 `explorer.exe /select,路径`
-2. `Shell.Application` COM 接口让已在运行的 explorer 自己打开，用 `Document.SelectItem` 选中文件
-3. `ShellExecute` 兜底
-
-### 刷新为什么不会闪烁
-
-三层处理：
-1. 连接表按「噪声分组 → 状态 → PID → 地址」排序（内核返回顺序不固定，不排序会乱跳）
-2. 内容 hash 未变时跳过重建
-3. DataGridView 开启双缓冲
-
-同时记住滚动位置和选中行，刷新后原样恢复。
-
-### 滚动条为什么不再反复伸缩
-
-首屏几十个进程的签名要异步校验，每个校验完成后都要把结果写回界面。早期实现是每次写回都 `lastHash = 0` 后整表重建——几十个文件就是几十次重建，滚动条跟着一会儿变长一会儿变短。
-
-现在签名结果直接改 `DataTable` 里对应的那一行（`ApplySignature`），不碰行数、不碰滚动位置。首屏加载期间另有一层转圈遮罩盖住表格，等取数完成再一次性揭开。
-
-自检里的「首屏只重建一次」断言锁的就是这条：整表重建次数必须为 1。
 
 ## 已知限制
 
