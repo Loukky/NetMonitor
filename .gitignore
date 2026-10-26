@@ -1,0 +1,17 @@
+# 编译产物
+NetMonitor.exe
+*.exe
+
+# 运行配置（含个人窗口位置）
+settings.ini
+
+# 临时截图（正式截图是 screenshot.png，要提交）
+shot.png
+menu.png
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.suo
+bin/
+obj/
