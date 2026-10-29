@@ -124,3 +124,7 @@ NetMonitor.exe --check-ui   :: 界面、菜单定位、刷新行为、切换语�
 ## 许可
 
 MIT
+
+---
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
