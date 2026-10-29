@@ -33,8 +33,5 @@ if %RC% neq 0 (
     exit /b 1
 )
 
-rem 语言文件随 exe 分发，缺了也能跑（内置简体中文兜底）
-if not exist lang mkdir lang
-xcopy /y /q lang\*.ini lang\ >nul 2>&1
-
 echo 编译完成: NetMonitor.exe  (v%VER%)
+exit /b 0
