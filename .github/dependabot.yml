@@ -1,0 +1,11 @@
+version: 2
+
+updates:
+  # 只跟踪 GitHub Actions 的版本。
+  # 项目用 csc 直接编译，没有 .csproj / packages.config，nuget 生态无对象可更新。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
