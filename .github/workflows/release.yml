@@ -1,0 +1,72 @@
+name: Release
+
+# 只有 version.txt 变化时才构建发布，改代码不升版本号不会触发
+on:
+  push:
+    branches: [main]
+    paths: [version.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 读取版本号
+        id: v
+        shell: pwsh
+        run: |
+          $raw = (Get-Content version.txt -Raw).Trim()
+          if ($raw -notmatch '^\d+\.\d+\.\d+$') {
+            throw "version.txt 格式错误，应为 MAJOR.MINOR.PATCH，实际是: '$raw'"
+          }
+          "version=$raw" >> $env:GITHUB_OUTPUT
+          "tag=v$raw" >> $env:GITHUB_OUTPUT
+          Write-Host "版本: $raw"
+
+      - name: 已发布则跳过
+        id: exists
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $tag = "${{ steps.v.outputs.tag }}"
+          if (git tag -l $tag) {
+            Write-Host "标签 $tag 已存在，跳过构建"
+            "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "skip=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: 编译
+        if: steps.exists.outputs.skip == 'false'
+        shell: cmd
+        run: build.bat
+
+      - name: 打包
+        if: steps.exists.outputs.skip == 'false'
+        shell: pwsh
+        run: |
+          $v = "${{ steps.v.outputs.version }}"
+          $dir = "NetMonitor-v$v-win-x64"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item NetMonitor.exe, LICENSE, README.md -Destination $dir -Force
+          Copy-Item lang -Destination $dir -Recurse -Force
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
+          Get-Item "$dir.zip" | Select-Object Name, Length
+
+      - name: 发布
+        if: steps.exists.outputs.skip == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "${{ steps.v.outputs.version }}"
+          gh release create "v$v" "NetMonitor-v$v-win-x64.zip" `
+            --title "NetMonitor v$v" `
+            --generate-notes

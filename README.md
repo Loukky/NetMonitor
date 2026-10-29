@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)]()
 [![.NET Framework](https://img.shields.io/badge/.NET%20Framework-4.5%2B-purple.svg)]()
+[![Release](https://img.shields.io/github/v/release/Loukky/NetMonitor)](https://github.com/Loukky/NetMonitor/releases)
 
 ![界面截图](screenshot.png)
 
@@ -37,13 +38,15 @@
 - .NET Framework 4.5+（系统自带）
 - **需要管理员权限**（读取系统进程信息、结束受保护进程所需）
 
-## 使用
+## 下载
 
-直接双击 `NetMonitor.exe`，UAC 提示点「是」。
+到 [Releases](https://github.com/Loukky/NetMonitor/releases) 下载最新的 `NetMonitor-v*-win-x64.zip`，解压后双击 `NetMonitor.exe`，UAC 提示点「是」。
+
+压缩包里是 exe、`lang/` 语言文件和 README，不需要安装，也不用装 .NET —— 系统自带。
 
 ## 从源码编译
 
-不需要安装 Visual Studio，用系统自带的 C# 编译器即可：
+不需要安装 Visual Studio，用系统自带的 C# 编译器即可。双击 `build.bat` 就行，它等价于：
 
 ```bat
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe ^
@@ -52,7 +55,25 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe ^
   Native.cs Settings.cs Lang.cs ProcActions.cs MainForm.cs GridData.cs Program.cs
 ```
 
-或双击 `build.bat`。
+`build.bat` 额外做两件事：按 `version.txt` 生成 `_version.cs`（程序集版本信息，编译完即删），以及把 `lang/*.ini` 复制到输出目录。
+
+## 版本与发布
+
+版本号只有一个来源：仓库根目录的 `version.txt`，内容就是 `MAJOR.MINOR.PATCH`：
+
+```
+1.0.0
+```
+
+发布流程：
+
+1. 改 `version.txt`（比如改成 `1.1.0`）
+2. 提交并推送到 `main`
+3. GitHub Actions 检测到 `version.txt` 变化，自动编译、打包、创建 `v1.1.0` 标签和 Release
+
+**只改代码不改 `version.txt` 不会触发构建**，所以日常提交不会产生一堆无意义的 Release。如果该版本号的标签已经存在，工作流会直接跳过，重复推送也不会重复发布。
+
+也可以在 Actions 页面手动触发（workflow_dispatch），适合调试构建脚本。
 
 ## 多语言
 
@@ -82,6 +103,7 @@ lang/en-US.ini
 | `Program.cs` | 程序入口与自检 |
 | `app.manifest` | UAC 清单（requireAdministrator） |
 | `app.ico` | 程序图标，7 种尺寸（16–256） |
+| `version.txt` | 版本号唯一来源，改动即触发自动发布 |
 | `lang/*.ini` | 界面文案（繁中、英文），可自行增改 |
 
 ## 自检
